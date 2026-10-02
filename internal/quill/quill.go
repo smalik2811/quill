@@ -108,7 +108,7 @@ func Run(ctx context.Context) error {
 		}
 
 		if inMovementMode {
-			quillPointer.HandleInput(inputEvent)
+			quillPointer.HandleInputEvent(inputEvent)
 		} else {
 			if err := quillKeyboard.WriteOne(inputEvent); err != nil {
 				fmt.Printf("failed to write input event to the quill keyboard, got: %v\n", err)
