@@ -130,8 +130,20 @@ func NewQuillPonter() (*QuillPointer, error) {
 	}
 
 	capabilities := map[evdev.EvType][]evdev.EvCode{
-		evdev.EV_KEY: {evdev.BTN_LEFT, evdev.BTN_RIGHT},
-		evdev.EV_REL: {evdev.REL_X, evdev.REL_Y},
+		evdev.EV_KEY: {
+			evdev.BTN_LEFT,
+			evdev.BTN_RIGHT,
+			evdev.BTN_MIDDLE,
+			evdev.BTN_BACK,
+			evdev.BTN_FORWARD,
+		},
+
+		evdev.EV_REL: {
+			evdev.REL_X,
+			evdev.REL_Y,
+			evdev.REL_WHEEL,
+			evdev.REL_HWHEEL,
+		},
 	}
 
 	qPointer, err := evdev.CreateDevice(
