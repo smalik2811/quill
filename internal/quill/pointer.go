@@ -2,6 +2,7 @@ package quill
 
 import (
 	"github.com/holoplot/go-evdev"
+	"github.com/samber/lo"
 )
 
 type pointerMode int
@@ -18,6 +19,8 @@ var evKeyToMode = map[evdev.EvCode]pointerMode{
 	evdev.KEY_Z:        modeZoom,
 	evdev.KEY_LEFTCTRL: modePrecise,
 }
+
+var keyToEventHandler = map[evdev.EvCode]func(qPointer *QuillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent{}
 
 var evKeyToTranslation = map[evdev.EvCode]struct {
 	code  evdev.EvCode
@@ -37,7 +40,43 @@ var evKeyToTranslation = map[evdev.EvCode]struct {
 	},
 	evdev.KEY_L: {
 		code:  evdev.REL_X,
-		value: 5,
+		value: 1,
+	},
+}
+
+var evKeyToScroll = map[evdev.EvCode]struct {
+	code  evdev.EvCode
+	value int32
+}{
+	evdev.KEY_H: {
+		code:  evdev.REL_HWHEEL,
+		value: -1,
+	},
+	evdev.KEY_J: {
+		code:  evdev.REL_WHEEL,
+		value: 1,
+	},
+	evdev.KEY_K: {
+		code:  evdev.REL_WHEEL,
+		value: -1,
+	},
+	evdev.KEY_L: {
+		code:  evdev.REL_HWHEEL,
+		value: 1,
+	},
+}
+
+var evKeyToZoom = map[evdev.EvCode]struct {
+	code  evdev.EvCode
+	value int32
+}{
+	evdev.KEY_J: {
+		code:  evdev.REL_WHEEL,
+		value: 1,
+	},
+	evdev.KEY_K: {
+		code:  evdev.REL_WHEEL,
+		value: -1,
 	},
 }
 
@@ -77,7 +116,7 @@ var evKeyToNavigation = map[evdev.EvCode]struct {
 type QuillPointer struct {
 	*evdev.InputDevice
 	pointerMode
-	translationSpeed int32
+	motionSpeed int32
 }
 
 func NewQuillPonter() (*QuillPointer, error) {
@@ -128,47 +167,95 @@ func (q *QuillPointer) handleMode(iEvent *evdev.InputEvent) {
 }
 
 // For translation, evRelease and evRepeat leads to movement, evPress is no-op.
-func (q *QuillPointer) handleTranslationEvent(iEvent *evdev.InputEvent) *evdev.InputEvent {
-	translation, ok := evKeyToTranslation[iEvent.Code]
-
-	if !ok {
-		return nil
-	}
-
+// Translation could be precise.
+// For scroll, evRelease and evRepeat leads to scroll, evPress is no-op.
+// For zoom, evRelease and evRepeat leds to zoom, evPress is no-op.
+func handleMotionEvent(qPointer *QuillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent {
 	if iEvent.Value == evPress {
 		return nil
 	}
 
-	translationSpeed := q.translationSpeed
-	if q.pointerMode == modePrecise || q.pointerMode == modeZoom {
-		translationSpeed = 1
+	switch qPointer.pointerMode {
+	case modeNormal, modePrecise:
+		translation, ok := evKeyToTranslation[iEvent.Code]
+		if !ok {
+			return nil
+		}
+
+		motionSpeed := qPointer.motionSpeed
+		if qPointer.pointerMode == modePrecise {
+			motionSpeed = 1
+		}
+
+		return []*evdev.InputEvent{
+			&evdev.InputEvent{
+				Type:  evdev.EV_REL,
+				Code:  translation.code,
+				Value: translation.value * motionSpeed,
+			},
+		}
+
+	case modeScroll:
+		scroll, ok := evKeyToScroll[iEvent.Code]
+		if !ok {
+			return nil
+		}
+
+		return []*evdev.InputEvent{
+			&evdev.InputEvent{
+				Type:  evdev.EV_REL,
+				Code:  scroll.code,
+				Value: scroll.value,
+			},
+		}
+
+	case modeZoom:
+		zoom, ok := evKeyToZoom[iEvent.Code]
+		if !ok {
+			return nil
+		}
+		return []*evdev.InputEvent{
+			&evdev.InputEvent{
+				Type:  evdev.EV_KEY,
+				Code:  evdev.KEY_LEFTCTRL,
+				Value: evPress,
+			},
+			&evdev.InputEvent{
+				Type:  evdev.EV_REL,
+				Code:  zoom.code,
+				Value: zoom.value,
+			},
+			&evdev.InputEvent{
+				Type:  evdev.EV_KEY,
+				Code:  evdev.KEY_LEFTCTRL,
+				Value: evRelease,
+			},
+		}
 	}
 
-	return &evdev.InputEvent{
-		Type:  evdev.EV_REL,
-		Code:  translation.code,
-		Value: translation.value * translationSpeed,
-	}
+	return nil
 }
 
 // For click, each event is directly reflected.
-func (q *QuillPointer) handleClickEvent(iEvent *evdev.InputEvent) *evdev.InputEvent {
+func handleClickEvent(_ *QuillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent {
 	click, ok := evKeyToClick[iEvent.Code]
 
 	if !ok {
 		return nil
 	}
 
-	return &evdev.InputEvent{
-		Type:  evdev.EV_KEY,
-		Code:  click.code,
-		Value: iEvent.Value,
+	return []*evdev.InputEvent{
+		&evdev.InputEvent{
+			Type:  evdev.EV_KEY,
+			Code:  click.code,
+			Value: iEvent.Value,
+		},
 	}
 }
 
 // For navigation, only evRelease is operational.
-func (q *QuillPointer) handleNavigationEvent(iEvent *evdev.InputEvent) *evdev.InputEvent {
-	click, ok := evKeyToClick[iEvent.Code]
+func handleNavigationEvent(_ *QuillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent {
+	click, ok := evKeyToNavigation[iEvent.Code]
 
 	if !ok {
 		return nil
@@ -178,10 +265,12 @@ func (q *QuillPointer) handleNavigationEvent(iEvent *evdev.InputEvent) *evdev.In
 		return nil
 	}
 
-	return &evdev.InputEvent{
-		Type:  evdev.EV_KEY,
-		Code:  click.code,
-		Value: iEvent.Value,
+	return []*evdev.InputEvent{
+		&evdev.InputEvent{
+			Type:  evdev.EV_KEY,
+			Code:  click.code,
+			Value: iEvent.Value,
+		},
 	}
 }
 
@@ -192,17 +281,25 @@ func (q *QuillPointer) HandleInputEvent(iEvent *evdev.InputEvent) {
 
 	q.handleMode(iEvent)
 
-	if translationEvent := q.handleTranslationEvent(iEvent); translationEvent != nil {
-		q.InputDevice.WriteOne(translationEvent)
+	if eventHandler, ok := keyToEventHandler[iEvent.Code]; ok {
+		quillEvents := eventHandler(q, iEvent)
+		lo.ForEach(quillEvents, func(qEvent *evdev.InputEvent, _ int) {
+			q.InputDevice.WriteOne(qEvent)
+			q.InputDevice.WriteOne(syncEvent)
+		})
 	}
+}
 
-	if clickEvent := q.handleClickEvent(iEvent); clickEvent != nil {
-		q.InputDevice.WriteOne(clickEvent)
-	}
+func init() {
+	lo.ForEach(lo.Keys(evKeyToTranslation), func(key evdev.EvCode, _ int) {
+		keyToEventHandler[key] = handleMotionEvent
+	})
 
-	if navigationEvent := q.handleNavigationEvent(iEvent); navigationEvent != nil {
-		q.InputDevice.WriteOne(navigationEvent)
-	}
+	lo.ForEach(lo.Keys(evKeyToClick), func(key evdev.EvCode, _ int) {
+		keyToEventHandler[key] = handleClickEvent
+	})
 
-	q.InputDevice.WriteOne(&evdev.InputEvent{Type: evdev.EV_SYN, Code: evdev.SYN_REPORT, Value: 0})
+	lo.ForEach(lo.Keys(evKeyToNavigation), func(key evdev.EvCode, _ int) {
+		keyToEventHandler[key] = handleNavigationEvent
+	})
 }
