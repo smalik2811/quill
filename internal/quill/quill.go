@@ -13,10 +13,6 @@ import (
 )
 
 func Run(ctx context.Context) error {
-	// inMovementMode decides whether the key input should be directed
-	// to the virtual keyboard or the virtual pointing device.
-	var inMovementMode bool
-
 	systemKeyboard, err := getSystemKeyboard()
 	if err != nil {
 		return fmt.Errorf("failed to read your keyboard, got: %w", err)
@@ -27,30 +23,27 @@ func Run(ctx context.Context) error {
 		}
 	}()
 
-	quillKeyboard, err := evdev.CloneDevice("Quill_Keyboard", systemKeyboard)
+	qKeyboard, err := createQuillKeyboard(systemKeyboard)
 	if err != nil {
-		return fmt.Errorf("failed to clone your keyboard, got: %w", err)
+		return fmt.Errorf("failed to create quill keyboard, got: %w", err)
 	}
 	defer func() {
-		if err := evdev.DestroyDevice(quillKeyboard); err != nil {
-			fmt.Printf("failed to destroy the quill keyboard resource: %v\n", err)
+		if err := qKeyboard.close(); err != nil {
+			fmt.Printf("failed to close quill keyboard: %v\n", err)
 		}
 	}()
 
-	quillPointer, err := NewQuillPonter()
+	qPointer, err := createQuillPointer()
 	if err != nil {
 		return fmt.Errorf("failed to create quill pointer, got: %w", err)
 	}
 	defer func() {
-		if err := quillKeyboard.Close(); err != nil {
-			fmt.Printf("failed to close the quill pointer: %v\n", err)
-			return
-		}
-
-		if err := evdev.DestroyDevice(quillPointer.InputDevice); err != nil {
-			fmt.Printf("failed to destroy the quill pointer resource: %v\n", err)
+		if err := qPointer.close(); err != nil {
+			fmt.Printf("failed to close quill pointer: %v\n", err)
 		}
 	}()
+
+	r := createRouter(qPointer, qKeyboard)
 
 	if err := systemKeyboard.Grab(); err != nil {
 		return fmt.Errorf("failed to grab you keyboard, got: %w", err)
@@ -94,26 +87,7 @@ func Run(ctx context.Context) error {
 
 		fmt.Printf("input event received from system keyboard: %+v\n", inputEvent)
 
-		if inputEvent.Type == evdev.EV_KEY && inputEvent.Code == evdev.KEY_CAPSLOCK && inputEvent.Value == 0 {
-			inMovementMode = !inMovementMode
-			fmt.Printf("~~~ MODE CHANGED ~~~")
-
-			inputPipedTo := "keyboard"
-			if inMovementMode {
-				inputPipedTo = "mouse"
-			}
-			fmt.Printf("Input being directed to %v", inputPipedTo)
-
-			continue
-		}
-
-		if inMovementMode {
-			quillPointer.HandleInputEvent(inputEvent)
-		} else {
-			if err := quillKeyboard.WriteOne(inputEvent); err != nil {
-				fmt.Printf("failed to write input event to the quill keyboard, got: %v\n", err)
-			}
-		}
+		r.route(inputEvent)
 	}
 
 	return nil
