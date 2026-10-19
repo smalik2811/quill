@@ -10,7 +10,7 @@ import (
 type quillPointer struct {
 	virtualDevice
 	pointerMode
-	motionSpeed int32
+	movement movementState
 }
 
 func createQuillPointer() (*quillPointer, error) {
@@ -33,21 +33,31 @@ func createQuillPointer() (*quillPointer, error) {
 	}
 
 	qPointerVirtual := virtualDevice{
-		InputDevice: qPointer,
+		eventWriter: qPointer,
 		heldKeys:    []evdev.EvCode{},
+		closeFn: func() error {
+			return evdev.DestroyDevice(qPointer)
+		},
 	}
 
 	return &quillPointer{
-		qPointerVirtual,
-		modeNormal,
-		defaultMotionSpeed,
-	}, err
+		virtualDevice: qPointerVirtual,
+		pointerMode:   modeNormal,
+		movement: movementState{
+			edgeProvider: NewHyprlandClient(),
+		},
+	}, nil
+}
+
+func (q *quillPointer) reset() {
+	q.pointerMode = modeNormal
+	q.movement.reset()
 }
 
 func (q *quillPointer) handleInputEvent(iEvent *evdev.InputEvent) {
 	for _, e := range q.process(iEvent) {
 		q.updateHeldKeys(e)
-		q.InputDevice.WriteOne(e)
+		q.WriteOne(e)
 	}
 }
 
@@ -58,7 +68,9 @@ func (q *quillPointer) process(iEvent *evdev.InputEvent) []*evdev.InputEvent {
 		return nil
 	}
 
-	q.handleMode(iEvent)
+	if q.handleMode(iEvent) {
+		q.movement.reset()
+	}
 
 	eventHandler, ok := keyToEventHandler[iEvent.Code]
 	if !ok {
@@ -72,15 +84,16 @@ func (q *quillPointer) process(iEvent *evdev.InputEvent) []*evdev.InputEvent {
 	return out
 }
 
-// For modeNormal, evPress or evRepeat causes transtion to other states, evRelease is no-op.
+// For modeNormal, evPress or evRepeat causes transition to other states, evRelease is no-op.
 // For non-modeNormal, modeNormal is the only transition allowed.
 // For non-modeNormal, evPress or evRepeat is no-op and evRelease transitions to modeNormal.
-func (q *quillPointer) handleMode(iEvent *evdev.InputEvent) {
+func (q *quillPointer) handleMode(iEvent *evdev.InputEvent) bool {
 	newMode, ok := evKeyToMode[iEvent.Code]
 	if !ok {
-		return
+		return false
 	}
 
+	oldMode := q.pointerMode
 	switch q.pointerMode {
 	case modeNormal:
 		if iEvent.Value == evPress || iEvent.Value == evRepeat {
@@ -91,45 +104,28 @@ func (q *quillPointer) handleMode(iEvent *evdev.InputEvent) {
 			q.pointerMode = modeNormal
 		}
 	}
+	return q.pointerMode != oldMode
 }
 
-// For translation, evRelease and evRepeat leads to movement, evPress is no-op.
-// Translation could be precise.
+// For translation, delegates to the movement state.
 // For scroll, evRelease and evRepeat leads to scroll, evPress is no-op.
-// For zoom, evRelease and evRepeat leds to zoom, evPress is no-op.
+// For zoom, evRelease and evRepeat leads to zoom, evPress is no-op.
 func handleMotionEvent(qPointer *quillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent {
-	if iEvent.Value == evPress {
-		return nil
-	}
-
 	switch qPointer.pointerMode {
 	case modeNormal, modePrecise:
-		translation, ok := evKeyToTranslation[iEvent.Code]
-		if !ok {
-			return nil
-		}
-
-		motionSpeed := qPointer.motionSpeed
-		if qPointer.pointerMode == modePrecise {
-			motionSpeed = preciseMotionSpeed
-		}
-
-		return []*evdev.InputEvent{
-			&evdev.InputEvent{
-				Type:  evdev.EV_REL,
-				Code:  translation.code,
-				Value: translation.value * motionSpeed,
-			},
-		}
+		return qPointer.movement.handle(qPointer.pointerMode, iEvent)
 
 	case modeScroll:
+		if iEvent.Value == evPress {
+			return nil
+		}
 		scroll, ok := evKeyToScroll[iEvent.Code]
 		if !ok {
 			return nil
 		}
 
 		return []*evdev.InputEvent{
-			&evdev.InputEvent{
+			{
 				Type:  evdev.EV_REL,
 				Code:  scroll.code,
 				Value: scroll.value,
@@ -137,22 +133,25 @@ func handleMotionEvent(qPointer *quillPointer, iEvent *evdev.InputEvent) []*evde
 		}
 
 	case modeZoom:
+		if iEvent.Value == evPress {
+			return nil
+		}
 		zoom, ok := evKeyToZoom[iEvent.Code]
 		if !ok {
 			return nil
 		}
 		return []*evdev.InputEvent{
-			&evdev.InputEvent{
+			{
 				Type:  evdev.EV_KEY,
 				Code:  evdev.KEY_LEFTCTRL,
 				Value: evPress,
 			},
-			&evdev.InputEvent{
+			{
 				Type:  evdev.EV_REL,
 				Code:  zoom.code,
 				Value: zoom.value,
 			},
-			&evdev.InputEvent{
+			{
 				Type:  evdev.EV_KEY,
 				Code:  evdev.KEY_LEFTCTRL,
 				Value: evRelease,
@@ -176,7 +175,7 @@ func handleClickEvent(_ *quillPointer, iEvent *evdev.InputEvent) []*evdev.InputE
 	}
 
 	return []*evdev.InputEvent{
-		&evdev.InputEvent{
+		{
 			Type:  evdev.EV_KEY,
 			Code:  click.code,
 			Value: iEvent.Value,
@@ -184,7 +183,7 @@ func handleClickEvent(_ *quillPointer, iEvent *evdev.InputEvent) []*evdev.InputE
 	}
 }
 
-// For navigation, only evRelease is operational.
+// For navigation, evPress and evRelease are operational, evRepeat is no-op.
 func handleNavigationEvent(_ *quillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent {
 	click, ok := evKeyToNavigation[iEvent.Code]
 	if !ok {
@@ -222,13 +221,6 @@ const (
 	modePrecise
 )
 
-const (
-	// defaultMotionSpeed is the per-event step for normal movement.
-	defaultMotionSpeed int32 = 1
-	// preciseMotionSpeed is the per-event step while precise mode is active.
-	preciseMotionSpeed int32 = 1
-)
-
 // pointerCapabilities is the single source of truth for what the virtual pointer
 // declares to the kernel. Events using a code outside this set are silently
 // dropped by uinput, so tests assert every emitted event is covered here.
@@ -237,6 +229,8 @@ var pointerCapabilities = map[evdev.EvType][]evdev.EvCode{
 		evdev.BTN_LEFT,
 		evdev.BTN_RIGHT,
 		evdev.BTN_MIDDLE,
+		evdev.BTN_SIDE,
+		evdev.BTN_EXTRA,
 		evdev.BTN_BACK,
 		evdev.BTN_FORWARD,
 	},
@@ -251,7 +245,7 @@ var pointerCapabilities = map[evdev.EvType][]evdev.EvCode{
 var evKeyToMode = map[evdev.EvCode]pointerMode{
 	evdev.KEY_S:        modeScroll,
 	evdev.KEY_Z:        modeZoom,
-	evdev.KEY_LEFTCTRL: modePrecise,
+	evdev.KEY_A:        modePrecise,
 }
 
 var evKeyToTranslation = map[evdev.EvCode]struct {
@@ -338,10 +332,10 @@ var evKeyToNavigation = map[evdev.EvCode]struct {
 	code evdev.EvCode
 }{
 	evdev.KEY_Q: {
-		code: evdev.BTN_BACK,
+		code: evdev.BTN_SIDE, // Standard Linux/X11/Wayland button 8 (Browser Back)
 	},
 	evdev.KEY_W: {
-		code: evdev.BTN_FORWARD,
+		code: evdev.BTN_EXTRA, // Standard Linux/X11/Wayland button 9 (Browser Forward)
 	},
 }
 

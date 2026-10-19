@@ -2,22 +2,29 @@ package quill
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/holoplot/go-evdev"
 	"github.com/samber/lo"
-	"github.com/samber/lo/mutable"
 )
 
+type eventWriter interface {
+	WriteOne(event *evdev.InputEvent) error
+}
+
 type virtualDevice struct {
-	*evdev.InputDevice
+	eventWriter
 	heldKeys []evdev.EvCode
+	closeFn  func() error
 }
 
 func (v *virtualDevice) close() error {
 	v.flush()
 
-	if err := evdev.DestroyDevice(v.InputDevice); err != nil {
-		return fmt.Errorf("failed to cleanup quill keyboard and release resources, got: %w", err)
+	if v.closeFn != nil {
+		if err := v.closeFn(); err != nil {
+			return fmt.Errorf("failed to cleanup device resources, got: %w", err)
+		}
 	}
 
 	return nil
@@ -39,17 +46,16 @@ func (v *virtualDevice) flush() {
 		return
 	}
 
-	mutable.Reverse(v.heldKeys)
-
-	lo.ForEach(v.heldKeys, func(code evdev.EvCode, _ int) {
-		v.InputDevice.WriteOne(&evdev.InputEvent{
+	for i := range slices.Backward(v.heldKeys) {
+		v.WriteOne(&evdev.InputEvent{
 			Type:  evdev.EV_KEY,
-			Code:  code,
+			Code:  v.heldKeys[i],
 			Value: evRelease,
 		})
-	})
+		v.WriteOne(syncEvent)
+	}
 
-	v.InputDevice.WriteOne(syncEvent)
+	v.heldKeys = []evdev.EvCode{}
 }
 
 func (v *virtualDevice) press(code evdev.EvCode) {

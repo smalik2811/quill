@@ -17,7 +17,7 @@ func forEveryInput(t *testing.T, check func(t *testing.T, mode pointerMode, k ev
 	for _, mode := range allModes {
 		for _, k := range allTestKeys {
 			for _, v := range allValues {
-				out := newTestPointer(mode, 5).process(in(k, v))
+				out := newTestPointer(mode).process(in(k, v))
 				if len(out) > 0 {
 					emitting++
 				}
@@ -78,7 +78,7 @@ func TestInvariant_UnboundKeysEmitNothingInAnyMode(t *testing.T) {
 	for _, mode := range allModes {
 		for _, k := range []evdev.EvCode{evdev.KEY_A, evdev.KEY_ESC} {
 			for _, v := range allValues {
-				if out := newTestPointer(mode, 5).process(in(k, v)); len(out) != 0 {
+				if out := newTestPointer(mode).process(in(k, v)); len(out) != 0 {
 					t.Errorf("mode=%s key=%s value=%d emitted %v", mode, evdev.KEYToString[k], v, describeAll(payload(out)))
 				}
 			}
@@ -93,7 +93,7 @@ func TestInvariant_NonKeyEventsAreIgnoredByThePointer(t *testing.T) {
 			{Type: evdev.EV_MSC, Code: evdev.MSC_SCAN, Value: 30},
 			{Type: evdev.EV_SYN, Code: evdev.SYN_REPORT},
 		} {
-			if out := newTestPointer(mode, 5).process(e); len(out) != 0 {
+			if out := newTestPointer(mode).process(e); len(out) != 0 {
 				t.Errorf("mode=%s %s produced output", mode, describe(e))
 			}
 		}
@@ -192,7 +192,7 @@ func TestConfig_DeclaredCapabilitiesCoverEveryBoundCode(t *testing.T) {
 }
 
 func TestConfig_NormalSpeedExceedsPreciseSpeed(t *testing.T) {
-	if !(defaultMotionSpeed > preciseMotionSpeed) {
-		t.Errorf("precise mode has no effect: default step %d, precise step %d", defaultMotionSpeed, preciseMotionSpeed)
+	if !(normalCurve(0) > preciseCurve(0)) {
+		t.Errorf("precise mode has no effect: normal start speed %v, precise speed %v", normalCurve(0), preciseCurve(0))
 	}
 }

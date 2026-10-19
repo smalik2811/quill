@@ -6,9 +6,11 @@ import (
 	"github.com/holoplot/go-evdev"
 )
 
-type quillKeyboard = virtualDevice
+type quillKeyboard struct {
+	virtualDevice
+}
 
-func createQuillKeyboard(sourceKeyboard *evdev.InputDevice) (*virtualDevice, error) {
+func createQuillKeyboard(sourceKeyboard *evdev.InputDevice) (*quillKeyboard, error) {
 	keyboardName := "Quill Keyboard"
 	sKbName, _ := sourceKeyboard.Name()
 
@@ -17,13 +19,18 @@ func createQuillKeyboard(sourceKeyboard *evdev.InputDevice) (*virtualDevice, err
 		return nil, fmt.Errorf("failed to clone the user keyboard %s", sKbName)
 	}
 
-	return &virtualDevice{
-		InputDevice: qKeyboard,
-		heldKeys:    []evdev.EvCode{},
+	return &quillKeyboard{
+		virtualDevice: virtualDevice{
+			eventWriter: qKeyboard,
+			heldKeys:    []evdev.EvCode{},
+			closeFn: func() error {
+				return evdev.DestroyDevice(qKeyboard)
+			},
+		},
 	}, nil
 }
 
-func (v *virtualDevice) handleInputEvent(iEvent *evdev.InputEvent) {
-	v.InputDevice.WriteOne(iEvent)
-	v.InputDevice.WriteOne(syncEvent)
+func (k *quillKeyboard) handleInputEvent(iEvent *evdev.InputEvent) {
+	k.updateHeldKeys(iEvent)
+	k.WriteOne(iEvent)
 }

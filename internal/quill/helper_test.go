@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/holoplot/go-evdev"
@@ -21,23 +22,35 @@ func in(code evdev.EvCode, val inputVal) *evdev.InputEvent {
 	return &evdev.InputEvent{Type: evdev.EV_KEY, Code: code, Value: val}
 }
 
+// inAt builds an EV_KEY event with a timestamp.
+func inAt(code evdev.EvCode, val inputVal, t time.Duration) *evdev.InputEvent {
+	return &evdev.InputEvent{
+		Time:  syscall.NsecToTimeval(t.Nanoseconds()),
+		Type:  evdev.EV_KEY,
+		Code:  code,
+		Value: val,
+	}
+}
+
 // ev builds an expected output event.
 func ev(typ evdev.EvType, code evdev.EvCode, val int32) *evdev.InputEvent {
 	return &evdev.InputEvent{Type: typ, Code: code, Value: val}
 }
 
-type fakeInputDevice struct {
-	file          *os.File
-	driverVersion int32
+type pipeDevice struct {
+	file *os.File
 }
 
-func newPipeDevice() (*evdev.InputDevice, *os.File) {
+func (p *pipeDevice) WriteOne(event *evdev.InputEvent) error {
+	return binary.Write(p.file, binary.LittleEndian, event)
+}
+
+func newPipeDevice() (*pipeDevice, *os.File) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		panic(err)
 	}
-	fake := &fakeInputDevice{file: w}
-	return (*evdev.InputDevice)(unsafe.Pointer(fake)), r
+	return &pipeDevice{file: w}, r
 }
 
 func readDeviceEvents(r *os.File) []*evdev.InputEvent {
@@ -69,25 +82,26 @@ type testRouter struct {
 	ptrReader      *os.File
 }
 
-func newTestPointer(mode pointerMode, speed int32) *quillPointer {
-	return &quillPointer{pointerMode: mode, motionSpeed: speed}
+func newTestPointer(mode pointerMode) *quillPointer {
+	return &quillPointer{pointerMode: mode}
 }
 
 func newTestRouter() *testRouter {
 	kbDev, kbReader := newPipeDevice()
 	ptrDev, ptrReader := newPipeDevice()
 
-	kb := &virtualDevice{
-		InputDevice: kbDev,
-		heldKeys:    []evdev.EvCode{},
+	kb := &quillKeyboard{
+		virtualDevice: virtualDevice{
+			eventWriter: kbDev,
+			heldKeys:    []evdev.EvCode{},
+		},
 	}
 	ptr := &quillPointer{
 		virtualDevice: virtualDevice{
-			InputDevice: ptrDev,
+			eventWriter: ptrDev,
 			heldKeys:    []evdev.EvCode{},
 		},
 		pointerMode: modeNormal,
-		motionSpeed: 5,
 	}
 
 	r := createRouter(ptr, kb)

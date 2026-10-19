@@ -12,6 +12,8 @@ import (
 	"github.com/samber/lo"
 )
 
+const debugEvents = false
+
 func Run(ctx context.Context) error {
 	systemKeyboard, err := getSystemKeyboard()
 	if err != nil {
@@ -85,7 +87,9 @@ func Run(ctx context.Context) error {
 			continue
 		}
 
-		fmt.Printf("input event received from system keyboard: %+v\n", inputEvent)
+		if debugEvents {
+			fmt.Printf("input event received from system keyboard: %+v\n", inputEvent)
+		}
 
 		r.route(inputEvent)
 	}
