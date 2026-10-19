@@ -155,6 +155,16 @@ xdg-open curve.html
 
 ---
 
+## 🧪 Platform Support & Tested Environments
+
+Quill is actively developed and tested on:
+- **Hyprland on Omarchy (Arch Linux)** — Verified with full edge-friction physics and IPC integration.
+
+> [!NOTE]  
+> If you have tested Quill on other supported environments (such as **Sway**, **i3**, **River**, or on different distributions and hardware like MacBooks), please open an issue and share your findings! We will gladly update the verified platforms list.
+
+---
+
 ## 🛠️ Building & Running
 
 ### Requirements
