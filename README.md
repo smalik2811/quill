@@ -129,21 +129,22 @@ $$v(t) = v_0 + (v_{\max} - v_0) \cdot \left(1 - e^{-(t/\tau)^p}\right)$$
 
 ```
 Speed (u/s)
-  2000 ┼─────────────────────────────────────────────╭─────── (Max Traversal Speed)
+  2000 ┼─────────────────────────────────────────────╭─────── (Max Traversal Speed: 2000 u/s)
        │                                      ╭──────╯
        │                               ╭──────╯
-  1000 ┼                        ╭──────╯                      (Midpoint: ~500ms)
+  1000 ┼                        ╭──────╯                      (Midpoint: ~520ms)
        │                 ╭──────╯
-       │          ╭──────╯
-   300 ┼    ╭─────╯
-    60 ┼────╯ (Flat initial micro-control: 0-150ms)
+   500 ┼          ╭──────╯
+       │    ╭─────╯
+    60 ┼────╯                                                 (Start Speed: 60 u/s)
      0 ┼──────┬───────┬───────┬───────┬───────┬───────┬───────
        0ms  150ms   300ms   450ms   600ms   750ms   1000ms    Hold Duration (t)
 ```
 
-1. **Initial Micro-Control ($0\text{–}150\,\text{ms}$)**: Speed starts at $60\,\text{units/s}$ with gentle initial acceleration. Tapping a key produces single-unit nudges.
-2. **Smooth Acceleration ($200\text{–}600\,\text{ms}$)**: Velocity ramps quadratically without abrupt velocity jumps, creating a predictable, intuitive response.
-3. **Edge-Friction Damping**: When running under Hyprland, Quill queries cursor position and applies dynamic friction proportional to proximity and hold duration. When nearing screen edges, velocity drops automatically to prevent overshooting.
+1. **Initial Micro-Control ($0\text{–}150\,\text{ms}$)**: Speed starts at $60\,\text{units/s}$ with smooth, gentle initial acceleration ($v_{150\text{ms}} \approx 160\,\text{u/s}$). Tapping a key produces single-unit nudges for precision targeting.
+2. **Predictable Quadratic Acceleration ($200\text{–}600\,\text{ms}$)**: Velocity ramps smoothly proportional to $t^2$ without abrupt velocity steps, giving intuitive muscle-memory control across medium distances.
+3. **High-Speed Screen Traversal ($750\text{ms}+$ )**: Approaches $2000\,\text{units/s}$ as hold time nears 1 second, allowing rapid crossing of high-resolution and multi-monitor setups.
+4. **Edge-Friction Damping**: When running under Hyprland, Quill queries cursor position and applies dynamic friction proportional to proximity and hold duration. When nearing screen edges, velocity drops automatically to prevent overshooting.
 
 ### Visualizing the Curve
 Quill includes a standalone visualizer tool. Run:
