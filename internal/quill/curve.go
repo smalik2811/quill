@@ -19,12 +19,12 @@ const (
 	// curveMaxSpeed is the speed the curve approaches the longer the key is held (units/s).
 	curveMaxSpeed = 2000.0
 	// curveTimeConstant is tau: the timescale governing the acceleration ramp.
-	// 650ms combined with power 3.0 keeps initial speed very low and gentle during
-	// the first 250-300ms, then smoothly accelerates across the display.
+	// 650ms combined with quadratic power 2.0 keeps initial speed predictable and smooth,
+	// gradually building velocity without sudden jumps across the display.
 	curveTimeConstant = 650 * time.Millisecond
-	// curvePower controls the initial acceleration: power > 1 produces an S-curve (ease-in ease-out)
-	// where acceleration starts near 0 for very fine micro-control at the beginning.
-	curvePower = 3.0
+	// curvePower controls the initial acceleration: power = 2.0 produces quadratic acceleration
+	// for smooth, highly predictable speed gain without abrupt velocity jumps.
+	curvePower = 2.0
 
 	// precisePointerSpeed is the constant speed used in precise mode (units/s).
 	precisePointerSpeed = 35.0
@@ -80,7 +80,7 @@ var (
 	preciseCurve = constantSpeed(precisePointerSpeed)
 )
 
-// smoothExponential returns an S-curve (ease-in ease-out): v0 at t=0, starting with
+// smoothExponential returns a curve with quadratic acceleration (power = 2.0): v0 at t=0, starting with
 // low acceleration so speed increases slowly at first, ramping up smoothly, and
 // then levelling off towards vmax. It never exceeds vmax.
 //

@@ -263,10 +263,6 @@ func TestZoom_CtrlIsBalanced(t *testing.T) {
 	}
 }
 
-func TestZoom_CtrlIsRoutedToVirtualKeyboard(t *testing.T) {
-	t.Skip("TODO needs outputs that carry a target device (keyboard vs pointer); today everything goes to the pointer")
-}
-
 func TestClick_ButtonMapping(t *testing.T) {
 	cases := map[evdev.EvCode]evdev.EvCode{
 		evdev.KEY_SPACE: evdev.BTN_MIDDLE,
@@ -300,11 +296,33 @@ func TestClick_EquivalentKeysProduceIdenticalOutput(t *testing.T) {
 }
 
 func TestClick_AutoRepeat(t *testing.T) {
-	t.Skip("TODO decide: are held-key repeats (value 2) dropped or forwarded to the button?")
+	for k := range evKeyToClick {
+		got := newTestPointer(modeNormal).process(in(k, evRepeat))
+		if len(got) != 0 {
+			t.Errorf("%s on repeat emitted %v, want nothing", evdev.KEYToString[k], describeAll(payload(got)))
+		}
+	}
 }
 
 func TestClick_WhileAnotherModeIsActive(t *testing.T) {
-	t.Skip("TODO decide: does N still click while S, Z or Ctrl is held, or is it ignored?")
+	for _, mode := range []pointerMode{modeScroll, modeZoom} {
+		for k := range evKeyToClick {
+			for _, v := range []inputVal{evPress, evRelease} {
+				got := newTestPointer(mode).process(in(k, v))
+				if len(got) != 0 {
+					t.Errorf("mode=%s key=%s value=%d emitted %v, want ignored",
+						mode, evdev.KEYToString[k], v, describeAll(payload(got)))
+				}
+			}
+		}
+	}
+
+	for _, mode := range []pointerMode{modeNormal, modePrecise} {
+		for k, click := range evKeyToClick {
+			got := newTestPointer(mode).process(in(k, evPress))
+			assertPayload(t, got, ev(evdev.EV_KEY, click.code, evPress))
+		}
+	}
 }
 
 func TestNavigation_Mapping(t *testing.T) {

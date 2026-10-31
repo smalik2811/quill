@@ -37,6 +37,28 @@ func TestCurve_NeverDecreasesAndNeverExceedsMax(t *testing.T) {
 	}
 }
 
+func TestCurve_QuadraticRampProperties(t *testing.T) {
+	cfg := GetCurveConfig()
+	if cfg.Power != 2.0 {
+		t.Errorf("expected quadratic curvePower = 2.0, got %v", cfg.Power)
+	}
+
+	// Verify that speed grows smoothly without sudden step jumps
+	s0 := EvaluateNormalCurve(0)
+	s150 := EvaluateNormalCurve(150 * time.Millisecond)
+	s300 := EvaluateNormalCurve(300 * time.Millisecond)
+	s600 := EvaluateNormalCurve(600 * time.Millisecond)
+
+	if !(s0 < s150 && s150 < s300 && s300 < s600) {
+		t.Errorf("expected strictly increasing quadratic ramp: s0=%v, s150=%v, s300=%v, s600=%v", s0, s150, s300, s600)
+	}
+
+	// Ensure micro-control at 150ms is gentle (< 300 units/s)
+	if s150 > 300.0 {
+		t.Errorf("initial speed at 150ms is too aggressive for quadratic ramp: %v", s150)
+	}
+}
+
 func TestCurve_TakeWholeKeepsRemainderAndCarries(t *testing.T) {
 	cases := []struct {
 		dist      float64

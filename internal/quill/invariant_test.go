@@ -34,9 +34,6 @@ func forEveryInput(t *testing.T, check func(t *testing.T, mode pointerMode, k ev
 func TestInvariant_EveryEmittedEventIsDeclaredByThePointer(t *testing.T) {
 	forEveryInput(t, func(t *testing.T, mode pointerMode, k evdev.EvCode, v inputVal, out []*evdev.InputEvent) {
 		for _, e := range payload(out) {
-			if e.Type == evdev.EV_KEY && e.Code == evdev.KEY_LEFTCTRL {
-				continue // TODO: zoom Ctrl should go to the virtual keyboard; remove this once it is routed there
-			}
 			if !isDeclaredByPointer(e) {
 				t.Errorf("mode=%s key=%s value=%d emitted undeclared %s", mode, evdev.KEYToString[k], v, describe(e))
 			}

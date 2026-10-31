@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -141,6 +142,42 @@ func (h *HyprlandClient) getCursorPos() (hyprlandCursorPos, error) {
 	return pos, nil
 }
 
+// getActiveMonitor determines which monitor is currently under the cursor or focused.
+func (h *HyprlandClient) getActiveMonitor() (*hyprlandMonitor, error) {
+	if h == nil {
+		return nil, fmt.Errorf("hyprland client is nil")
+	}
+
+	mons, err := h.getMonitors()
+	if err != nil || len(mons) == 0 {
+		return nil, err
+	}
+
+	cursor, err := h.getCursorPos()
+	if err == nil {
+		for i := range mons {
+			m := &mons[i]
+			scale := m.Scale
+			if scale <= 0 {
+				scale = 1
+			}
+			w := m.Width / scale
+			ht := m.Height / scale
+			if cursor.X >= m.X && cursor.X < m.X+w && cursor.Y >= m.Y && cursor.Y < m.Y+ht {
+				return m, nil
+			}
+		}
+	}
+
+	for i := range mons {
+		if mons[i].Focused {
+			return &mons[i], nil
+		}
+	}
+
+	return &mons[0], nil
+}
+
 func (h *HyprlandClient) DistanceToEdge(code evdev.EvCode) (distance float64, totalDim float64, ok bool) {
 	if h == nil {
 		return 0, 0, false
@@ -151,36 +188,9 @@ func (h *HyprlandClient) DistanceToEdge(code evdev.EvCode) (distance float64, to
 		return 0, 0, false
 	}
 
-	mons, err := h.getMonitors()
-	if err != nil || len(mons) == 0 {
+	activeMon, err := h.getActiveMonitor()
+	if err != nil || activeMon == nil {
 		return 0, 0, false
-	}
-
-	var activeMon *hyprlandMonitor
-	for i := range mons {
-		m := &mons[i]
-		scale := m.Scale
-		if scale <= 0 {
-			scale = 1
-		}
-		w := m.Width / scale
-		ht := m.Height / scale
-		if cursor.X >= m.X && cursor.X < m.X+w && cursor.Y >= m.Y && cursor.Y < m.Y+ht {
-			activeMon = m
-			break
-		}
-	}
-
-	if activeMon == nil {
-		for i := range mons {
-			if mons[i].Focused {
-				activeMon = &mons[i]
-				break
-			}
-		}
-		if activeMon == nil {
-			activeMon = &mons[0]
-		}
 	}
 
 	scale := activeMon.Scale
@@ -215,4 +225,71 @@ func (h *HyprlandClient) DistanceToEdge(code evdev.EvCode) (distance float64, to
 		distance = 0
 	}
 	return distance, totalDim, true
+}
+
+// ScreenScaleFactor returns the relative scale factor of the active screen compared
+// to a standard 1080p display (1920 logical width). This ensures traversal time across
+// the display remains consistent regardless of resolution or fractional scaling.
+func (h *HyprlandClient) ScreenScaleFactor() float64 {
+	if h == nil {
+		return 1.0
+	}
+
+	activeMon, err := h.getActiveMonitor()
+	if err != nil || activeMon == nil {
+		return 1.0
+	}
+
+	scale := activeMon.Scale
+	if scale <= 0 {
+		scale = 1.0
+	}
+	logW := activeMon.Width / scale
+	if logW <= 0 {
+		return 1.0
+	}
+
+	// Reference baseline: 1920 logical width
+	factor := logW / 1920.0
+	if factor < 0.5 {
+		factor = 0.5
+	} else if factor > 3.0 {
+		factor = 3.0
+	}
+	return factor
+}
+
+// ConfigureCompositor automatically sets flat acceleration profile and neutral
+// sensitivity on the compositor for the virtual Quill pointer device.
+func (h *HyprlandClient) ConfigureCompositor() {
+	if h == nil || h.socketPath == "" {
+		return
+	}
+
+	// 1. Hyprland keyword syntax
+	commands := []string{
+		"keyword device[quill-pointer]:accel_profile flat",
+		"keyword device[quill-pointer]:sensitivity 0.0",
+		"keyword device:quill-pointer:accel_profile flat",
+		"keyword device:quill-pointer:sensitivity 0.0",
+	}
+	for _, cmd := range commands {
+		_, _ = h.sendCommand(cmd)
+	}
+
+	// 2. Hyprland Lua syntax for configurations using non-legacy / Lua parser
+	luaCmd := `eval if hl and hl.config then hl.config({ device = { ["quill-pointer"] = { accel_profile = "flat", sensitivity = 0 } } }) end`
+	_, _ = h.sendCommand(luaCmd)
+}
+
+// AutoConfigureCompositor applies zero-config acceleration fixes across known compositors.
+func AutoConfigureCompositor(provider EdgeDistanceProvider) {
+	if client, ok := provider.(*HyprlandClient); ok && client != nil {
+		client.ConfigureCompositor()
+	}
+
+	// Also support Sway / wlroots if running
+	if os.Getenv("SWAYSOCK") != "" {
+		_ = exec.Command("swaymsg", "input", "type:pointer", "accel_profile", "flat").Run()
+	}
 }

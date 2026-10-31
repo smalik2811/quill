@@ -24,7 +24,7 @@ func main() {
 	fmt.Printf("  Start Speed (v0):        %8.1f units/s\n", cfg.StartSpeed)
 	fmt.Printf("  Max Speed (vmax):        %8.1f units/s\n", cfg.MaxSpeed)
 	fmt.Printf("  Timescale (tau):         %8v\n", cfg.TimeConstant)
-	fmt.Printf("  Curve Power (p):         %8.1f (p > 1 = S-curve ease-in ease-out)\n", cfg.Power)
+	fmt.Printf("  Curve Power (p):         %8.1f (p = 2.0 = Quadratic acceleration)\n", cfg.Power)
 	fmt.Printf("  Precise Mode Speed:      %8.1f units/s\n", cfg.PreciseSpeed)
 	fmt.Printf("  Initial Press Step:      %8d units\n", cfg.InitialPressStep)
 	fmt.Printf("  Max Step Interval (dt):  %8v\n", cfg.MaxStepInterval)
@@ -34,7 +34,7 @@ func main() {
 	// 1. ASCII Plot of Speed vs Time
 	printAsciiPlot(*maxDuration, cfg)
 
-	// 2. Sample Data Table
+	// 2. Sample Data Table with Effective Speed
 	printDataTable(*maxDuration)
 
 	// 3. HTML File Generation
@@ -49,7 +49,7 @@ func main() {
 }
 
 func printAsciiPlot(maxDur time.Duration, cfg quill.CurveConfig) {
-	fmt.Println("--- SPEED VS HOLD DURATION (Normal Mode S-Curve) ---")
+	fmt.Println("--- SPEED VS HOLD DURATION (Normal Mode Quadratic Acceleration) ---")
 	fmt.Println("  Time (ms) | Speed (units/s)                       0                          2000 units/s")
 	fmt.Println(" -----------+------------------------------------+-----------------------------------------")
 
@@ -74,10 +74,25 @@ func printAsciiPlot(maxDur time.Duration, cfg quill.CurveConfig) {
 	fmt.Println()
 }
 
+func computeDistanceAt(t time.Duration) float64 {
+	if t <= 0 {
+		return 0
+	}
+	const slices = 200
+	dt := t / slices
+	dtSec := dt.Seconds()
+	var dist float64
+	for i := 0; i < slices; i++ {
+		tMid := (time.Duration(i)*dt + time.Duration(i+1)*dt) / 2
+		dist += quill.EvaluateNormalCurve(tMid) * dtSec
+	}
+	return dist
+}
+
 func printDataTable(maxDur time.Duration) {
-	fmt.Println("--- DETAILED SAMPLE POINTS ---")
-	fmt.Println("  Hold Time | Normal Speed | Precise Speed | Δv / 50ms Repeat | Emitted Step (dt=50ms)")
-	fmt.Println(" -----------+--------------+---------------+------------------+------------------------")
+	fmt.Println("--- DETAILED SAMPLE POINTS (Including Effective Traversal Speed) ---")
+	fmt.Println("  Hold Time | Normal Speed | Effective Avg | Precise Speed | Total Travel | Emitted Step (dt=50ms)")
+	fmt.Println(" -----------+--------------+---------------+---------------+--------------+------------------------")
 
 	checkpoints := []time.Duration{
 		0,
@@ -95,20 +110,24 @@ func printDataTable(maxDur time.Duration) {
 		1000 * time.Millisecond,
 	}
 
-	var prevSpd float64 = quill.EvaluateNormalCurve(0)
 	for _, t := range checkpoints {
 		if t > maxDur {
 			break
 		}
 		spd := quill.EvaluateNormalCurve(t)
 		prec := quill.EvaluatePreciseCurve(t)
+		dist := computeDistanceAt(t)
+		var effSpeed float64
+		if t > 0 {
+			effSpeed = dist / t.Seconds()
+		} else {
+			effSpeed = spd
+		}
 		step50 := spd * 0.050 // REL units for a typical 50ms interval
-		deltaV := spd - prevSpd
-		fmt.Printf("   %5d ms  | %8.1f u/s | %9.1f u/s |    %+8.1f u/s  |    %6.1f REL units\n",
-			t.Milliseconds(), spd, prec, deltaV, step50)
-		prevSpd = spd
+		fmt.Printf("   %5d ms  | %8.1f u/s | %9.1f u/s | %9.1f u/s | %8.1f units |    %6.1f REL units\n",
+			t.Milliseconds(), spd, effSpeed, prec, dist, step50)
 	}
-	fmt.Println(" -----------+--------------+---------------+------------------+------------------------")
+	fmt.Println(" -----------+--------------+---------------+---------------+--------------+------------------------")
 	fmt.Println()
 }
 
@@ -118,6 +137,7 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
 
 	var labels []string
 	var normalData []string
+	var effSpeedData []string
 	var preciseData []string
 	var accelData []string
 	var edgeFrictionData []string
@@ -125,11 +145,35 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
 	totalDim := 1440.0 // standard logical width
 	distToEdge := 50.0 // near edge (50px)
 
+	var cumulativeDist float64
+	var effSpeedAt500ms float64
+	var totalDistAtMax float64
+
 	for i := 0; i <= samples; i++ {
 		t := time.Duration(i) * step
 		ms := t.Milliseconds()
 		spd := quill.EvaluateNormalCurve(t)
 		prec := quill.EvaluatePreciseCurve(t)
+
+		// Cumulative distance and effective average speed (v_eff = dist / t)
+		if i > 0 {
+			prevT := time.Duration(i-1) * step
+			prevSpd := quill.EvaluateNormalCurve(prevT)
+			dtSec := (t - prevT).Seconds()
+			cumulativeDist += ((prevSpd + spd) / 2.0) * dtSec
+		}
+
+		var effSpeed float64
+		if t > 0 {
+			effSpeed = cumulativeDist / t.Seconds()
+		} else {
+			effSpeed = spd
+		}
+
+		if ms == 500 || (effSpeedAt500ms == 0 && ms >= 500) {
+			effSpeedAt500ms = effSpeed
+		}
+		totalDistAtMax = cumulativeDist
 
 		// Acceleration: dv/dt
 		var accel float64
@@ -148,6 +192,7 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
 
 		labels = append(labels, fmt.Sprintf("%dms", ms))
 		normalData = append(normalData, fmt.Sprintf("%.1f", spd))
+		effSpeedData = append(effSpeedData, fmt.Sprintf("%.1f", effSpeed))
 		preciseData = append(preciseData, fmt.Sprintf("%.1f", prec))
 		accelData = append(accelData, fmt.Sprintf("%.1f", accel))
 		edgeFrictionData = append(edgeFrictionData, fmt.Sprintf("%.1f", spdDamped))
@@ -168,7 +213,7 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
       padding: 24px;
     }
     .container {
-      max-width: 1080px;
+      max-width: 1100px;
       margin: 0 auto;
     }
     h1 {
@@ -189,7 +234,7 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
     }
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 16px;
       margin-bottom: 24px;
     }
@@ -206,28 +251,28 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
       letter-spacing: 0.5px;
     }
     .stat-value {
-      font-size: 22px;
+      font-size: 20px;
       font-weight: 600;
       color: #f0f6fc;
       margin-top: 4px;
     }
     .chart-wrapper {
       position: relative;
-      height: 440px;
+      height: 480px;
       width: 100%%;
     }
     .legend-desc {
       color: #8b949e;
       font-size: 13px;
-      margin-top: 12px;
-      line-height: 1.5;
+      margin-top: 14px;
+      line-height: 1.6;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Quill Movement Velocity & Acceleration Curve</h1>
-    <div class="subtitle">Live visualization of currently configured S-curve and edge-friction model</div>
+    <div class="subtitle">Live visualization of instantaneous velocity, cumulative effective speed, and edge-friction physics</div>
 
     <div class="stats-grid">
       <div class="stat-box" style="border-left-color: #58a6ff;">
@@ -238,13 +283,21 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
         <div class="stat-label">Max Speed (vmax)</div>
         <div class="stat-value">%.1f <span style="font-size: 13px; color: #8b949e;">units/s</span></div>
       </div>
+      <div class="stat-box" style="border-left-color: #2ea043;">
+        <div class="stat-label">Effective Avg (at 500ms)</div>
+        <div class="stat-value">%.1f <span style="font-size: 13px; color: #8b949e;">units/s</span></div>
+      </div>
+      <div class="stat-box" style="border-left-color: #38bdf8;">
+        <div class="stat-label">Total Distance (1s Hold)</div>
+        <div class="stat-value">%.0f <span style="font-size: 13px; color: #8b949e;">units</span></div>
+      </div>
       <div class="stat-box" style="border-left-color: #d29922;">
         <div class="stat-label">Ramp Timescale (&tau;)</div>
         <div class="stat-value">%v</div>
       </div>
       <div class="stat-box" style="border-left-color: #a371f7;">
         <div class="stat-label">Curve Power (p)</div>
-        <div class="stat-value">%.1f <span style="font-size: 13px; color: #8b949e;">(S-curve)</span></div>
+        <div class="stat-value">%.1f <span style="font-size: 13px; color: #8b949e;">(Quadratic)</span></div>
       </div>
       <div class="stat-box" style="border-left-color: #f0883e;">
         <div class="stat-label">Initial Nudge</div>
@@ -258,10 +311,11 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
       </div>
       <div class="legend-desc">
         <strong>Curves explanation:</strong><br>
-        &bull; <span style="color: #58a6ff;"><strong>Normal Speed:</strong></span> S-curve velocity starting with gentle acceleration at t=0, smoothly picking up speed and approaching 2000 units/s.<br>
-        &bull; <span style="color: #f0883e;"><strong>Near Screen Edge (Damped):</strong></span> Shows the dynamic friction braking when moving towards an edge (at 50px distance).<br>
-        &bull; <span style="color: #3fb950;"><strong>Precise Mode:</strong></span> Constant 60 units/s for single-pixel precision tasks.<br>
-        &bull; <span style="color: #a371f7;"><strong>Acceleration (dv/dt):</strong></span> Shows acceleration starting low, peaking during the mid-ramp, and easing off to zero as top speed is reached.
+        &bull; <span style="color: #58a6ff;"><strong>Normal Speed (Instantaneous):</strong></span> Instantaneous velocity approaching 2000 units/s.<br>
+        &bull; <span style="color: #2ea043;"><strong>Effective Speed (Cumulative Average):</strong></span> True average speed across the hold (&int;v dt &divide; t), representing the actual pace at which you traverse the screen.<br>
+        &bull; <span style="color: #f0883e;"><strong>Near Screen Edge (Damped):</strong></span> Shows dynamic friction braking when moving towards a border (at 50px distance).<br>
+        &bull; <span style="color: #38bdf8;"><strong>Precise Mode:</strong></span> Constant 35 units/s for single-pixel precision tasks.<br>
+        &bull; <span style="color: #a371f7;"><strong>Acceleration (dv/dt):</strong></span> Shows acceleration peaking during the mid-ramp and easing off to zero as top speed is approached.<br>
       </div>
     </div>
   </div>
@@ -274,14 +328,24 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
         labels: [%s],
         datasets: [
           {
-            label: 'Normal Speed (units/s)',
+            label: 'Normal Speed (Instantaneous u/s)',
             data: [%s],
             borderColor: '#58a6ff',
-            backgroundColor: 'rgba(88, 166, 255, 0.1)',
+            backgroundColor: 'rgba(88, 166, 255, 0.08)',
             borderWidth: 3,
             tension: 0.2,
             yAxisID: 'y',
             fill: true
+          },
+          {
+            label: 'Effective Speed (Cumulative Avg u/s)',
+            data: [%s],
+            borderColor: '#2ea043',
+            backgroundColor: 'rgba(46, 160, 67, 0.08)',
+            borderWidth: 2.5,
+            tension: 0.2,
+            yAxisID: 'y',
+            fill: false
           },
           {
             label: 'Speed Near Edge (50px from edge)',
@@ -296,7 +360,7 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
           {
             label: 'Precise Mode (units/s)',
             data: [%s],
-            borderColor: '#3fb950',
+            borderColor: '#38bdf8',
             borderWidth: 2,
             yAxisID: 'y',
             fill: false
@@ -360,11 +424,14 @@ func generateHTMLChart(path string, maxDur time.Duration, cfg quill.CurveConfig)
 </html>`,
 		cfg.StartSpeed,
 		cfg.MaxSpeed,
+		effSpeedAt500ms,
+		totalDistAtMax,
 		cfg.TimeConstant,
 		cfg.Power,
 		cfg.InitialPressStep,
 		`"`+strings.Join(labels, `","`)+`"`,
 		strings.Join(normalData, ","),
+		strings.Join(effSpeedData, ","),
 		strings.Join(edgeFrictionData, ","),
 		strings.Join(preciseData, ","),
 		strings.Join(accelData, ","),

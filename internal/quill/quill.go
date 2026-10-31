@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/holoplot/go-evdev"
@@ -15,15 +16,36 @@ import (
 const debugEvents = false
 
 func Run(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	systemKeyboard, err := getSystemKeyboard()
 	if err != nil {
 		return fmt.Errorf("failed to read your keyboard, got: %w", err)
 	}
-	defer func() {
-		if err := systemKeyboard.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
-			fmt.Printf("failed to close the system keyboard resource: %v\n", err)
-		}
-	}()
+
+	var (
+		cleanupKeyboardOnce sync.Once
+		isGrabbed           bool
+		grabMu              sync.Mutex
+	)
+	cleanupKeyboard := func() {
+		cleanupKeyboardOnce.Do(func() {
+			grabMu.Lock()
+			grabbed := isGrabbed
+			grabMu.Unlock()
+			if grabbed {
+				if err := systemKeyboard.Ungrab(); err != nil && !errors.Is(err, syscall.EBADF) && !strings.Contains(err.Error(), "bad file descriptor") {
+					fmt.Printf("failed to ungrab your keyboard: %v\n", err)
+				}
+			}
+			if err := systemKeyboard.Close(); err != nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, syscall.EBADF) {
+				fmt.Printf("failed to close the system keyboard resource: %v\n", err)
+			}
+		})
+	}
+	defer cleanupKeyboard()
 
 	qKeyboard, err := createQuillKeyboard(systemKeyboard)
 	if err != nil {
@@ -50,11 +72,9 @@ func Run(ctx context.Context) error {
 	if err := systemKeyboard.Grab(); err != nil {
 		return fmt.Errorf("failed to grab you keyboard, got: %w", err)
 	}
-	defer func() {
-		if err := systemKeyboard.Ungrab(); err != nil && !errors.Is(err, syscall.EBADF) && !strings.Contains(err.Error(), "bad file descriptor") {
-			fmt.Printf("failed to ungrab your keyboard: %v\n", err)
-		}
-	}()
+	grabMu.Lock()
+	isGrabbed = true
+	grabMu.Unlock()
 
 	if err := systemKeyboard.NonBlock(); err != nil {
 		return fmt.Errorf("failed to set your keyboard to non block: %w", err)
@@ -68,7 +88,7 @@ func Run(ctx context.Context) error {
 	go func() {
 		select {
 		case <-ctx.Done():
-			systemKeyboard.Close()
+			cleanupKeyboard()
 		case <-stopWatcher:
 		}
 	}()
@@ -98,24 +118,27 @@ func Run(ctx context.Context) error {
 }
 
 func getSystemKeyboard() (*evdev.InputDevice, error) {
-	// TODO: Handle cleanup
-	const KeyboardDeviceIdentifier = "keyboard"
+	const keyboardDeviceIdentifier = "keyboard"
 
 	iPaths, err := evdev.ListDevicePaths()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list input devices, got: %w", err)
 	}
 
-	kbInput, ok := lo.Find(iPaths, func(item evdev.InputPath) bool {
-		return strings.Contains(item.Name, KeyboardDeviceIdentifier)
-	})
-	if !ok {
-		return nil, fmt.Errorf("no input device found with name matching: %s", KeyboardDeviceIdentifier)
+	if len(iPaths) == 0 && os.Geteuid() != 0 {
+		return nil, fmt.Errorf("no input devices accessible; please run with sudo or add your user to the 'input' group")
 	}
 
-	if kbDevice, err := evdev.Open(kbInput.Path); err != nil {
-		return nil, fmt.Errorf("failed to open the keyboard device %s at %s, got: %v", kbInput.Name, kbInput.Path, err)
-	} else {
-		return kbDevice, nil
+	kbInput, ok := lo.Find(iPaths, func(item evdev.InputPath) bool {
+		return strings.Contains(strings.ToLower(item.Name), keyboardDeviceIdentifier)
+	})
+	if !ok {
+		return nil, fmt.Errorf("no input device found with name matching: %s", keyboardDeviceIdentifier)
 	}
+
+	kbDevice, err := evdev.Open(kbInput.Path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open the keyboard device %s at %s, got: %v", kbInput.Name, kbInput.Path, err)
+	}
+	return kbDevice, nil
 }

@@ -2,6 +2,8 @@ package quill
 
 import (
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/holoplot/go-evdev"
 	"github.com/samber/lo"
@@ -11,6 +13,10 @@ type quillPointer struct {
 	virtualDevice
 	pointerMode
 	movement movementState
+
+	mu         sync.Mutex
+	tickerStop chan struct{}
+	tickerWg   sync.WaitGroup
 }
 
 func createQuillPointer() (*quillPointer, error) {
@@ -40,24 +46,105 @@ func createQuillPointer() (*quillPointer, error) {
 		},
 	}
 
-	return &quillPointer{
+	qp := &quillPointer{
 		virtualDevice: qPointerVirtual,
 		pointerMode:   modeNormal,
 		movement: movementState{
 			edgeProvider: NewHyprlandClient(),
 		},
-	}, nil
+	}
+
+	go func() {
+		// Wait briefly for the compositor to register the new uinput device before configuring
+		time.Sleep(150 * time.Millisecond)
+		AutoConfigureCompositor(qp.movement.edgeProvider)
+	}()
+
+	return qp, nil
+}
+
+func (q *quillPointer) close() error {
+	q.mu.Lock()
+	q.stopTicker()
+	q.mu.Unlock()
+	q.tickerWg.Wait()
+	return q.virtualDevice.close()
 }
 
 func (q *quillPointer) reset() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.stopTicker()
 	q.pointerMode = modeNormal
 	q.movement.reset()
 }
 
+const tickerInterval = 10 * time.Millisecond
+
+func (q *quillPointer) startTicker() {
+	if q.tickerStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	q.tickerStop = stop
+	q.tickerWg.Add(1)
+
+	go func() {
+		defer q.tickerWg.Done()
+		ticker := time.NewTicker(tickerInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				q.mu.Lock()
+				if q.tickerStop == nil || !q.movement.isMoving() {
+					q.mu.Unlock()
+					return
+				}
+				now := currentTimeDuration()
+				events := q.movement.step(q.pointerMode, now)
+				for _, e := range events {
+					q.updateHeldKeys(e)
+					_ = q.WriteOne(e)
+					_ = q.WriteOne(syncEvent)
+				}
+				q.mu.Unlock()
+			}
+		}
+	}()
+}
+
+func (q *quillPointer) stopTicker() {
+	if q.tickerStop != nil {
+		close(q.tickerStop)
+		q.tickerStop = nil
+	}
+}
+
 func (q *quillPointer) handleInputEvent(iEvent *evdev.InputEvent) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	// If a movement key is held and ticker is driving motion, drop hardware autorepeats
+	// so the internal ticker drives smooth, hardware-independent movement.
+	if iEvent.Type == evdev.EV_KEY && iEvent.Value == evRepeat {
+		if _, isMotion := evKeyToTranslation[iEvent.Code]; isMotion && (q.pointerMode == modeNormal || q.pointerMode == modePrecise) {
+			return
+		}
+	}
+
 	for _, e := range q.process(iEvent) {
 		q.updateHeldKeys(e)
-		q.WriteOne(e)
+		_ = q.WriteOne(e)
+	}
+
+	if q.movement.isMoving() && (q.pointerMode == modeNormal || q.pointerMode == modePrecise) {
+		q.startTicker()
+	} else {
+		q.stopTicker()
 	}
 }
 
@@ -163,9 +250,15 @@ func handleMotionEvent(qPointer *quillPointer, iEvent *evdev.InputEvent) []*evde
 }
 
 // For click, each event is directly reflected.
-func handleClickEvent(_ *quillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent {
+// Clicks are ignored during scroll or zoom modes unless releasing a button
+// that was pressed prior to entering scroll or zoom mode.
+func handleClickEvent(qPointer *quillPointer, iEvent *evdev.InputEvent) []*evdev.InputEvent {
 	click, ok := evKeyToClick[iEvent.Code]
 	if !ok {
+		return nil
+	}
+
+	if (qPointer.pointerMode == modeScroll || qPointer.pointerMode == modeZoom) && !lo.Contains(qPointer.heldKeys, click.code) {
 		return nil
 	}
 
@@ -233,6 +326,7 @@ var pointerCapabilities = map[evdev.EvType][]evdev.EvCode{
 		evdev.BTN_EXTRA,
 		evdev.BTN_BACK,
 		evdev.BTN_FORWARD,
+		evdev.KEY_LEFTCTRL,
 	},
 	evdev.EV_REL: {
 		evdev.REL_X,
@@ -243,9 +337,9 @@ var pointerCapabilities = map[evdev.EvType][]evdev.EvCode{
 }
 
 var evKeyToMode = map[evdev.EvCode]pointerMode{
-	evdev.KEY_S:        modeScroll,
-	evdev.KEY_Z:        modeZoom,
-	evdev.KEY_A:        modePrecise,
+	evdev.KEY_S: modeScroll,
+	evdev.KEY_Z: modeZoom,
+	evdev.KEY_A: modePrecise,
 }
 
 var evKeyToTranslation = map[evdev.EvCode]struct {

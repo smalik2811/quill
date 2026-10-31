@@ -16,7 +16,10 @@ Reaching for a mouse or trackpad disrupts your flow state. If you live inside ti
 ## ✨ Features at a Glance
 
 - **Vim Navigation on the Home Row (`H`, `J`, `K`, `L`)**: Full 8-direction cursor movement directly beneath your fingertips.
-- **Physical Acceleration S-Curve**: Starts with near-zero acceleration and gentle velocity for single-pixel precision, then ramps smoothly into rapid screen traversal.
+- **Predictable Quadratic Acceleration Curve**: Starts with gentle velocity ($v_0 = 60\,\text{u/s}$) for single-pixel precision, then ramps smoothly with quadratic acceleration ($p = 2.0$) into rapid screen traversal.
+- **Hardware-Agnostic High-Resolution Internal Ticker (100 Hz)**: Movement runs on an internal 100Hz clock, completely decoupling pointer speed from physical keyboard repeat delays and repeat rates for identical feel on any laptop.
+- **Dynamic Screen-Resolution & Display Scaling**: Automatically detects active monitor dimensions and scaling via Hyprland IPC, adapting velocity so crossing any display takes a consistent, predictable duration.
+- **Zero-Config Compositor Setup**: Automatically commands the compositor (Hyprland / Sway) to apply a flat 1:1 acceleration profile on startup, preventing "double acceleration".
 - **Dynamic Screen-Edge Friction (Hyprland IPC)**: Real-time proximity awareness slows cursor velocity as you approach screen boundaries, preventing cursor overshooting.
 - **Smart 10-Second Auto-Restore**: If you finish a quick mouse task and pause, Quill automatically returns to standard keyboard mode after 10 seconds of inactivity.
 - **Zero-Friction Window Manager Combos**: Keys like `Super`/`Command`, `Alt`/`Option`, `Ctrl`, `Shift`, `Fn`, and `Esc` immediately bypass pointer interception—shortcuts like `Super + F` (fullscreen), `Ctrl + C` (copy), or `Super + [1-9]` (workspace switch) work effortlessly in all modes.
@@ -120,7 +123,7 @@ In Pointer Mode, only letter keys (<kbd>A</kbd>–<kbd>Z</kbd>) are captured for
 
 ## 📈 The Velocity Curve & Edge-Friction Physics
 
-Quill models pointer velocity using a cubic S-curve ($p=3.0$, $\tau=650\,\text{ms}$) governed by:
+Quill models pointer velocity using a quadratic acceleration curve ($p=2.0$, $\tau=650\,\text{ms}$) governed by:
 
 $$v(t) = v_0 + (v_{\max} - v_0) \cdot \left(1 - e^{-(t/\tau)^p}\right)$$
 
@@ -138,8 +141,8 @@ Speed (u/s)
        0ms  150ms   300ms   450ms   600ms   750ms   1000ms    Hold Duration (t)
 ```
 
-1. **Initial Micro-Control ($0\text{–}150\,\text{ms}$)**: Speed starts at $60\,\text{units/s}$ with near-zero acceleration ($dv/dt \approx 0$). Tapping a key produces single-unit nudges.
-2. **Smooth Acceleration ($200\text{–}600\,\text{ms}$)**: Velocity ramps linearly across the display without sudden jumps.
+1. **Initial Micro-Control ($0\text{–}150\,\text{ms}$)**: Speed starts at $60\,\text{units/s}$ with gentle initial acceleration. Tapping a key produces single-unit nudges.
+2. **Smooth Acceleration ($200\text{–}600\,\text{ms}$)**: Velocity ramps quadratically without abrupt velocity jumps, creating a predictable, intuitive response.
 3. **Edge-Friction Damping**: When running under Hyprland, Quill queries cursor position and applies dynamic friction proportional to proximity and hold duration. When nearing screen edges, velocity drops automatically to prevent overshooting.
 
 ### Visualizing the Curve
@@ -148,7 +151,7 @@ Quill includes a standalone visualizer tool. Run:
 ```bash
 make plot
 ```
-This generates a terminal ASCII graph and writes [`curve.html`](file:///home/sonu/Projects/Development/quill/curve.html). Open it in your browser:
+This generates a terminal ASCII graph and writes [`curve.html`](curve.html). Open it in your browser:
 ```bash
 xdg-open curve.html
 ```
