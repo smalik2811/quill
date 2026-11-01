@@ -1,7 +1,7 @@
 # Quill 🪶
 
 [![CI](https://github.com/smalik2811/quill/actions/workflows/ci.yml/badge.svg)](https://github.com/smalik2811/quill/actions/workflows/ci.yml)
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 > **Never lift your fingers from the home row again.**  
@@ -177,7 +177,7 @@ Quill is actively developed and tested on:
 
 ### Requirements
 - Linux kernel with `/dev/uinput` enabled
-- Go 1.22 or newer
+- Go 1.26 or newer
 - Access to `evdev` devices (run with `sudo` or add user to `input` group)
 
 ### Build from Source
