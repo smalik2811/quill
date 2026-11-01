@@ -1,5 +1,9 @@
 # Quill 🪶
 
+[![CI](https://github.com/smalik2811/quill/actions/workflows/ci.yml/badge.svg)](https://github.com/smalik2811/quill/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/smalik2811/quill)](https://go.dev/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 > **Never lift your fingers from the home row again.**  
 > A blazing-fast, kernel-level input daemon for Linux power users, tiling window manager enthusiasts, and developers who refuse to reach for a mouse.
 
@@ -186,9 +190,28 @@ make build
 The compiled binary will be placed at `./build/quill`.
 
 ### Run
+
+#### Option 1: Run with `sudo` (Fastest)
 ```bash
 sudo ./build/quill
 ```
+
+#### Option 2: Run without Root (Recommended for Daily Use)
+1. Add your user to the `input` group:
+   ```bash
+   sudo usermod -aG input $USER
+   ```
+2. Copy the udev rule from [`packaging/99-quill.rules`](packaging/99-quill.rules) and reload udev:
+   ```bash
+   sudo cp packaging/99-quill.rules /etc/udev/rules.d/
+   sudo udevadm control --reload-rules && sudo udevadm trigger
+   ```
+3. Log out and back in (or reboot), then run directly:
+   ```bash
+   ./build/quill
+   ```
+
+A sample systemd user service file is also provided at [`packaging/quill.service`](packaging/quill.service).
 
 ### Running Tests
 Quill includes unit and invariant test suites ensuring safety, capabilities, and device flushing:
@@ -243,7 +266,7 @@ go test -v ./...
 The project is actively evolving. Key capabilities planned for upcoming releases include:
 
 - [ ] **Custom Input Device Selection**: Currently, Quill automatically discovers and grabs the first input device containing `keyboard` in its name. Future releases will allow users to explicitly specify the exact keyboard device path or device identifier (e.g. via CLI flag or config file) to capture input from when multiple keyboards or peripherals are connected.
-- [ ] **Systemd Service Integration**: Ship an out-of-the-box systemd user/system service so Quill launches seamlessly on boot.
+- [x] **Systemd Service Integration**: Service file and udev rules provided in [`packaging/`](packaging/) for systemd user service deployment.
 - [ ] **Custom Keybinding Configuration**: Flexible configuration file (e.g., TOML/YAML) to let users customize all mode triggers, motion keys, clicks, and modifiers.
 - [ ] **Status Bar Mode Indicator**: Lightweight status icon / module integration (Waybar, Polybar, eww) to visually indicate whether Quill is in **Keyboard Mode** or **Pointer Mode**.
 

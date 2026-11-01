@@ -1,0 +1,14 @@
+[Unit]
+Description=Quill Keyboard Pointer Daemon
+Documentation=https://github.com/smalik2811/quill
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/quill
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=graphical-session.target

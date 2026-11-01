@@ -1,0 +1,31 @@
+name: 💡 Feature Request / Idea
+description: Suggest an idea or feature for Quill
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We are actively looking for user workflow ideas and suggestions to improve Quill!
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: A clear and concise description of the limitation or friction you experienced.
+      placeholder: e.g. "I'm always frustrated when..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution / Desired Behavior
+      description: Describe what you would like Quill to do or how the feature should behave.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or features you've considered.
